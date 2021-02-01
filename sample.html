@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang='en-US'>
+
+<head>
+    <meta charset='utf-8'>
+    <meta http-equiv='X-UA-Compatible' content='IE=Edge'>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+    <title>Speedtest</title>
+    <script src='https://cdn.jsdelivr.net/npm/chart.js@2.8.0'></script>
+</head>
+
+<body>
+    <div class='content' style='margin: auto;width: 90vw; height: 90vh'>
+        <canvas id='chart-0'></canvas>
+        <canvas id='chart-1'></canvas>
+    </div>
+
+    <script>
+        var ctx = document.getElementById('chart-0').getContext('2d');
+        var chart = new Chart(ctx, {
+            // The type of chart we want to create
+            type: 'line',
+
+            // The data for our dataset
+            data: {
+                labels: [LABELSGOHERE],
+                datasets: [{
+                    label: 'Average download speed over the last 100ms per data point',
+                    backgroundColor: 'rgba(80, 80, 80, 0.7)',
+                    borderColor: 'rgba(80, 80, 80, 1.0)',
+                    data: [DOWNLOADDATAGOESHERE]
+                },
+                {
+                    label: 'Average upload speed over the last 100ms per data point',
+                    backgroundColor: 'rgba(80, 80, 80, 0.7)',
+                    borderColor: 'rgba(80, 80, 80, 1.0)',
+                    data: [UPLOADDATAGOESHERE]
+                }]
+            },
+
+            // Configuration options go here
+            options: {
+                layout: {
+                    padding: {
+                        left: 0,
+                        right: 0,
+                        top: 0,
+                        bottom: 0
+                    }
+                },
+                scales: {
+                    yAxes: [{
+                        ticks: {
+                            beginAtZero: true
+                        }
+                    }]
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -4,13 +4,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"log"
 	"net"
 	"os"
+	"strings"
 	"time"
 )
 
 var duration int64
 var packetSize int
+var ppiDownload []uint64
+var ppiUpload []uint64
 
 func main() {
 	var addr string
@@ -26,7 +31,7 @@ func main() {
 	flag.Parse()
 
 	//CHANGE WHEN FLAG IS USABLE
-	duration = 5
+	duration = 10
 	packetSize = 1e3
 	//CHANGE WHEN FLAG IS USABLE
 
@@ -55,26 +60,42 @@ func client(addr string) {
 	conn, err := net.DialTCP("tcp", nil, raddr)
 	checkError(err)
 	println("connected to: " + conn.RemoteAddr().String())
+
 	packet := make([]byte, packetSize)
+	var packetsPerInterval []uint64
 	for i := 0; i < 2; i++ {
 		var packetcount uint64 = 0
+
+		testDone := false
 		startTime := time.Now()
-		timerStartTime := startTime
-		timeElapsed := time.Since(startTime)
 		go func() {
-			timerStartTimeSince := time.Since(timerStartTime)
-			for timerStartTimeSince.Milliseconds() < duration*2 {
+			timerStartTimeSince := time.Since(startTime).Seconds()
+			for !testDone {
+				for len(packetsPerInterval) == 0 {
+					time.Sleep(1e6)
+				}
 				if i == 0 {
-					fmt.Printf("\rTesting download Speed (%ds/"+fmt.Sprint(duration*2/1e3)+"s) | %.2fMbit/s", int(timerStartTimeSince.Seconds()), calcRate(packetcount, timeElapsed))
+					fmt.Printf("\rTesting download Speed (%ds/"+fmt.Sprint(duration/1e3)+"s) | %.2fMbit/s", int(timerStartTimeSince), calcRate(packetsPerInterval[len(packetsPerInterval)-1], time.Millisecond*100))
 				} else if i == 1 {
-					fmt.Printf("\rTesting upload Speed (%ds/"+fmt.Sprint(duration*2/1e3)+"s) | %.2fMbit/s", int(timerStartTimeSince.Seconds()), calcRate(packetcount, timeElapsed))
+					fmt.Printf("\rTesting upload Speed (%ds/"+fmt.Sprint(duration/1e3)+"s) | %.2fMbit/s", int(timerStartTimeSince), calcRate(packetsPerInterval[len(packetsPerInterval)-1], time.Millisecond*100))
 				}
 				time.Sleep(10e6)
-				timerStartTimeSince = time.Since(timerStartTime)
+				timerStartTimeSince = time.Since(startTime).Seconds()
 			}
 		}()
+
+		go func() {
+			packetsPerInterval = append(packetsPerInterval, 0)
+			for i := 0; i < int((duration/1e3))*10; i++ {
+				time.Sleep(100 * time.Millisecond)
+				packetsPerInterval = append(packetsPerInterval, packetcount)
+				packetcount = 0
+			}
+			testDone = true
+		}()
+
 		var err error
-		for timeElapsed.Milliseconds() < duration {
+		for !testDone {
 			if i == 0 {
 				_, err = io.ReadFull(conn, packet)
 			} else if i == 1 {
@@ -82,42 +103,65 @@ func client(addr string) {
 			}
 			if err == nil {
 				packetcount++
-			} else {
-				break
-			}
-			timeElapsed = time.Since(startTime)
-		}
-		startTime = time.Now()
-		timeElapsed = time.Since(startTime)
-		packetcount = 0
-		for timeElapsed.Milliseconds() < duration {
-			if i == 0 {
-				_, err = io.ReadFull(conn, packet)
-			} else if i == 1 {
-				_, err = conn.Write(packet)
-			}
 
-			if err == nil {
-				packetcount++
-			} else {
-				break
 			}
-			timeElapsed = time.Since(startTime)
 		}
 
+		var fullPacketCount uint64
 		if i == 0 {
-			time.Sleep(1e8)
+			ppiDownload = packetsPerInterval
+		} else if i == 1 {
+			ppiUpload = packetsPerInterval
+		}
+		for _, b := range packetsPerInterval {
+			fullPacketCount += b
+		}
+		packetsPerInterval = make([]uint64, 0)
+		dura, err := time.ParseDuration(fmt.Sprint(duration) + "ms")
+		checkError(err)
+		if i == 0 {
 			println()
-			println("Average Download Speed: ", fmt.Sprintf("%.2f", calcRate(packetcount, timeElapsed)), " Mbit/s")
+			println("Average Download Speed: ", fmt.Sprintf("%.2f", calcRate(fullPacketCount, dura)), " Mbit/s")
 		} else if i == 1 {
 			println()
-			println("Average Upload Speed: ", fmt.Sprintf("%.2f", calcRate(packetcount, timeElapsed)), " Mbit/s")
+			println("Average Upload Speed: ", fmt.Sprintf("%.2f", calcRate(fullPacketCount, dura)), " Mbit/s")
 		}
 	}
+
+	chartDataDL := ""
+	chartLabelsDL := ""
+	for a, b := range ppiDownload {
+		chartDataDL += fmt.Sprintf("%.2f", calcRate(b, time.Millisecond*100)) + ","
+		chartLabelsDL += "'" + fmt.Sprint(a*100) + "'" + ","
+	}
+	chartDataDL = strings.TrimSuffix(chartDataDL, ",")
+	chartLabelsDL = strings.TrimSuffix(chartLabelsDL, ",")
+
+	chartDataUL := ""
+	chartLabelsUL := ""
+	for a, b := range ppiUpload {
+		chartDataUL += fmt.Sprintf("%.2f", calcRate(b, time.Millisecond*100)) + ","
+		chartLabelsUL += "'" + fmt.Sprint(a*100) + "'" + ","
+	}
+	chartDataUL = strings.TrimSuffix(chartDataUL, ",")
+	chartLabelsUL = strings.TrimSuffix(chartLabelsUL, ",")
+
+	println("Generatin Report")
+	htmlSampleBytes, err := ioutil.ReadFile("sample.html")
+	checkError(err)
+	html := strings.Replace(string(htmlSampleBytes), "LABELSGOHERE", chartLabelsDL, -1)
+	html = strings.Replace(html, "DOWNLOADDATAGOESHERE", chartDataDL, -1)
+	html = strings.Replace(html, "UPLOADDATAGOESHERE", chartDataUL, -1)
+	htmlFile, err := os.Create("speedtest.html")
+	checkError(err)
+	_, err = io.WriteString(htmlFile, html)
+	checkError(err)
+	println("Done")
 }
 
 func calcRate(packetCount uint64, timeElapsed time.Duration) float64 {
-	return (((float64(packetCount) / (float64(timeElapsed.Nanoseconds()) / 1e9)) / (1e6 / float64(packetSize))) * 8)
+	//+58 bytes for the non data parts of the tcp packets-> http://www.firewall.cx/networking-topics/protocols/tcp/138-tcp-options.html
+	return (((float64(packetCount) / (float64(timeElapsed.Nanoseconds()) / 1e9)) / (1e6 / float64(packetSize+58))) * 8)
 }
 
 func server(port string) {
@@ -129,21 +173,20 @@ func server(port string) {
 	println("listening at (tcp) " + lport.String())
 	conn, err := l.AcceptTCP()
 	checkError(err)
-	println("connected to: " + conn.RemoteAddr().String())
-
-	packet := make([]byte, 1000)
+	log.Println("connected to: " + conn.RemoteAddr().String())
+	packet := make([]byte, packetSize)
 	startTime := time.Now()
 	timeElapsed := time.Since(startTime)
-	for timeElapsed.Milliseconds() < duration*2 {
+	log.Println("Starting download test")
+	for timeElapsed.Milliseconds() < duration {
 		conn.Write(packet)
 		timeElapsed = time.Since(startTime)
 	}
 	startTime = time.Now()
 	timeElapsed = time.Since(startTime)
-	var packetcount uint64 = 0
-	for timeElapsed.Milliseconds() < duration*2 {
+	log.Println("Starting upload test")
+	for timeElapsed.Milliseconds() < duration {
 		io.ReadFull(conn, packet)
-		packetcount++
 		timeElapsed = time.Since(startTime)
 	}
 	conn.Close()
